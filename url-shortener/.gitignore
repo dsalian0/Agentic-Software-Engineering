@@ -1,0 +1,3 @@
+# H2 file databases (the 'local' profile uses in-memory H2, but guard against file-mode runs)
+*.mv.db
+*.trace.db

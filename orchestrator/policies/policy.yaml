@@ -1,0 +1,27 @@
+# Policy-as-code for agent changes. Severity: BLOCK fails the policy-scan stage (POLICY_BLOCK,
+# never retried, routed to rework), WARN is reported in the release summary, OFF disables a rule.
+version: "2026.11-1"
+
+# Agents may only change files under these sandbox paths. The Product API (repo root pom.xml,
+# src/, Dockerfile, ...) is outside every allowed prefix, so any attempt is blocked.
+allowedPathPrefixes:
+  - url-shortener/
+
+dependencyAllowlist:
+  - "org.springframework.boot:*"
+  - "org.springdoc:*"
+  - "org.flywaydb:*"
+  - "org.postgresql:postgresql"
+  - "com.h2database:h2"
+  - "org.projectlombok:lombok"
+
+maxChangedFiles: 80
+
+rules:
+  pii-raw-ip: BLOCK              # compliance: no raw client IPs persisted
+  secrets: BLOCK                 # security: no hard-coded credentials/keys
+  protected-paths: BLOCK         # change control: stay inside the approved project
+  migration-immutability: BLOCK  # change control: Flyway migrations are append-only
+  dependency-allowlist: BLOCK    # security/supply chain: only vetted dependencies
+  change-size: WARN              # reviewability
+  tests-accompany-code: WARN     # quality

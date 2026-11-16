@@ -3,6 +3,10 @@
 Spring Boot 3 REST API built with Java 21 and Maven, backed by PostgreSQL via Spring Data JPA,
 documented with OpenAPI/Swagger UI and packaged as a container image.
 
+> **Agentic engineering assignment:** this repository also contains a URL shortener (`url-shortener/`)
+> and a governed agentic SDLC orchestrator (`orchestrator/`). Start with [docs/README.md](docs/README.md).
+> The Product API below is unchanged by that work.
+
 ## Tech stack
 
 | Concern | Choice |

@@ -1,0 +1,44 @@
+name: orchestrator
+
+on:
+  push:
+    branches: [main, feature/agentic-engineering-assignment]
+    paths: ["orchestrator/**", "url-shortener/**", ".github/workflows/orchestrator-ci.yml"]
+  pull_request:
+    paths: ["orchestrator/**", "url-shortener/**", ".github/workflows/orchestrator-ci.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-demo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Unit, scenario-flow and playbook-consistency tests
+        run: mvn -B -f orchestrator/pom.xml clean package
+      - name: End-to-end scenarios (real sandbox builds; human steps are delegated and labelled)
+        run: java -jar orchestrator/target/orchestrator.jar demo all
+      - name: Verify every audit chain
+        run: |
+          for run in $(ls orchestrator/runs | grep -v metrics-summary); do
+            java -jar orchestrator/target/orchestrator.jar verify-audit "$run"
+          done
+      - name: Upload run reports and audit logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: orchestrator-runs
+          path: |
+            orchestrator/runs/**/report.md
+            orchestrator/runs/**/release-summary.md
+            orchestrator/runs/**/metrics.json
+            orchestrator/runs/**/audit.jsonl
+            orchestrator/runs/**/state.json
+            orchestrator/runs/**/logs/*.log
+            orchestrator/runs/metrics-summary.json

@@ -1,0 +1,137 @@
+# Governed SDLC workflow: an explicit dependency graph executed by the orchestrator engine.
+#
+#   intake -> clarify? -> plan -> impact-analysis? -> [approve-plan] -> design -> [change-control?]
+#        -> { implement || write-tests || write-docs }            (parallel fan-out)
+#        -> { build-test || policy-scan || contract-check }        (parallel verification, join ALL)
+#        -> release-readiness -> [approve-release] -> publish
+#
+# "?" stages are conditional (when:), "[...]" stages are human checkpoints. reads/writes define the
+# shared-state contract: changing an artifact invalidates exactly the stages that read it, plus
+# everything downstream of them (dynamic replanning).
+id: sdlc
+version: "1.0"
+description: Requirement to release-candidate with gates, approvals, recovery and audit
+budget:
+  maxStageExecutions: 60
+  maxWallClockMs: 3600000
+
+stages:
+  - id: intake
+    description: Normalize the requirement and score its ambiguity
+    agent: requirement-analyst
+    writes: [requirement, ambiguity-report]
+
+  - id: clarify
+    type: CLARIFICATION
+    description: Human answers the analyst's questions; no planning on undefined terms
+    agent: clarification-applier
+    dependsOn: [intake]
+    reads: [ambiguity-report]
+    writes: [requirement]
+    when: ambiguity-report.requiresClarification
+    timeoutMs: 86400000
+
+  - id: plan
+    description: Decompose into tasks with dependencies and parallel groups
+    agent: planner
+    dependsOn: [clarify]
+    reads: [requirement]
+    writes: [plan]
+
+  - id: impact-analysis
+    description: Brownfield codebase reasoning over the existing code (only when a baseline exists)
+    agent: impact-analyzer
+    dependsOn: [plan]
+    reads: [plan, requirement]
+    writes: [impact-report]
+    when: "param:baseline"
+
+  - id: approve-plan
+    type: APPROVAL
+    description: Human approves scope, plan and impact before any code is written
+    dependsOn: [impact-analysis]
+    reads: [requirement, plan, "impact-report?"]
+    timeoutMs: 86400000
+
+  - id: design
+    description: Derive API contract, schema and dependency changes; decide on change control
+    agent: designer
+    dependsOn: [approve-plan]
+    reads: [plan, "impact-report?"]
+    writes: [design]
+
+  - id: change-control
+    type: APPROVAL
+    description: High-impact change (schema or dependencies) needs explicit sign-off
+    dependsOn: [design]
+    reads: [design]
+    when: design.requiresChangeControl
+    timeoutMs: 86400000
+
+  - id: implement
+    description: Apply production code for the planned features (SCRIPTED from playbook)
+    agent: implementer
+    dependsOn: [change-control]
+    reads: [plan, design, "policy-feedback?"]
+    writes: [code-changes]
+
+  - id: write-tests
+    description: Apply unit/integration tests for the planned features (SCRIPTED from playbook)
+    agent: test-writer
+    dependsOn: [change-control]
+    reads: [plan, design]
+    writes: [test-changes]
+
+  - id: write-docs
+    description: Change notes; LLM writer first, deterministic template writer as fallback
+    agent: llm-doc-writer
+    fallbackAgent: template-doc-writer
+    dependsOn: [change-control]
+    reads: [requirement, plan, design]
+    writes: [docs]
+
+  - id: build-test
+    description: Real Maven build and full test suite in the sandbox
+    agent: maven-verifier
+    dependsOn: [implement, write-tests]
+    reads: [code-changes, test-changes, "impact-report?"]
+    writes: [test-report]
+    exitGates: [build-green, tests-not-decreased]
+    retry: {maxAttempts: 3, backoffMs: 2000, multiplier: 2.0}
+
+  - id: policy-scan
+    description: Security, privacy and change-control guardrails over every changed file
+    agent: policy-scanner
+    dependsOn: [implement, write-tests]
+    reads: [code-changes, test-changes]
+    writes: [policy-report]
+    onFailure: {stage: implement, maxReworks: 2, feedbackArtifact: policy-feedback}
+
+  - id: contract-check
+    description: API compatibility versus baseline and design
+    agent: contract-checker
+    dependsOn: [implement]
+    reads: [code-changes, design, "impact-report?"]
+    writes: [contract-report]
+
+  - id: release-readiness
+    description: Join point; checklist over all verification evidence
+    agent: release-manager
+    dependsOn: [build-test, policy-scan, contract-check, write-docs]
+    reads: [requirement, plan, design, code-changes, test-report, policy-report, contract-report, docs, "impact-report?"]
+    writes: [release-summary]
+    exitGates: [release-ready]
+
+  - id: approve-release
+    type: APPROVAL
+    description: Human owns final quality; approves the release candidate
+    dependsOn: [release-readiness]
+    reads: [release-summary]
+    timeoutMs: 86400000
+
+  - id: publish
+    description: Package the release-candidate manifest (never writes to the repository)
+    agent: publisher
+    dependsOn: [approve-release]
+    reads: [release-summary, code-changes, test-changes]
+    writes: [release-bundle]

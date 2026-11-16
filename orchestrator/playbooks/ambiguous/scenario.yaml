@@ -1,0 +1,68 @@
+# AMBIGUOUS: a requirement with no testable meaning.
+# Demonstrates: ambiguity detection, a clarification checkpoint (the run pauses instead of guessing),
+# requirement normalization from the answers, a conditional path (no schema change -> change-control
+# skipped), and dynamic replanning: after implementation is verified, the product owner amends the
+# requirement; the engine invalidates and rolls back only the dependent stages and re-plans.
+id: ambiguous
+title: Ambiguous - "secure and reliable links" on the existing shortener
+kind: BROWNFIELD
+requirement: |
+  Links must be secure and reliable, and we need to know how they perform.
+baseline: [brownfield]
+
+ambiguities:
+  - term: secure
+    question: "What does 'secure' mean for links?"
+    options:
+      - {id: url-safety, label: "Reject unsafe targets: internal/private hosts, embedded credentials, redirect loops, blocked domains"}
+      - {id: auth, label: "Require authentication to create links", outOfScope: true}
+  - term: reliable
+    question: "What does 'reliable' mean here?"
+    options:
+      - {id: rate-limit, label: "Protect link creation from abusive bursts with a per-client rate limit"}
+      - {id: no-change, label: "Current guarantees (bounded retries, non-blocking analytics) are sufficient"}
+  - term: perform
+    question: "'Know how they perform': click analytics per link, or service latency/SLOs?"
+    options:
+      - {id: existing-analytics, label: "Click analytics per link (already delivered by the brownfield change)"}
+      - {id: slo-dashboards, label: "Service latency SLO dashboards", outOfScope: true}
+
+# Answers the demo driver submits at the clarification checkpoint (recorded as a delegated human).
+clarificationAnswers:
+  secure: url-safety
+  reliable: no-change
+  perform: existing-analytics
+
+# Mid-run change from the product owner, applied by the demo after verification has completed.
+amendment:
+  note: "Product owner: 'reliable' must include protection against link-creation floods."
+  text: "Additionally, link creation must be protected against abusive bursts from a single client."
+  addFeatures: [rate-limit]
+
+features:
+  - id: url-safety
+    title: Reject unsafe link targets
+    triggers: [unsafe url, private network, url safety]
+    acceptance:
+      - "Targets with embedded credentials are rejected (400)"
+      - "Loopback, private, link-local, unique-local and encoded-IP hosts are rejected (400)"
+      - "Targets pointing back at the shortener itself, or at configured blocked domains, are rejected (400)"
+      - "No DNS lookups on the request path (documented limitation: DNS rebinding is out of scope)"
+    main:
+      - url-shortener/src/main/java/com/salian/shortener/link/UrlSafetyProperties.java
+      - url-shortener/src/main/java/com/salian/shortener/link/UrlSafetyPolicy.java
+    tests:
+      - url-shortener/src/test/java/com/salian/shortener/link/UrlSafetyPolicyTest.java
+  - id: rate-limit
+    title: Per-client rate limit on link creation
+    triggers: [rate limit, flood, throttl]
+    acceptance:
+      - "POST /api/v1/links beyond the per-client burst returns 429 with Retry-After"
+      - "Redirects and reads are never throttled"
+      - "Tracked client state is bounded (idle buckets evicted)"
+    main:
+      - url-shortener/src/main/java/com/salian/shortener/web/RateLimitProperties.java
+      - url-shortener/src/main/java/com/salian/shortener/web/CreateRateLimitFilter.java
+      - url-shortener/src/main/java/com/salian/shortener/web/RateLimitConfig.java
+    tests:
+      - url-shortener/src/test/java/com/salian/shortener/web/CreateRateLimitFilterTest.java

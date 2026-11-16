@@ -1,0 +1,49 @@
+# BROWNFIELD: enhance the existing service produced by the greenfield scenario.
+# Demonstrates: impact analysis over existing code (modified vs added files, event data flow),
+# change-control for a schema change, and a policy guardrail: the first implementation carries an
+# INJECTED privacy defect (raw client IP column), the policy scan blocks it, the engine rolls the
+# implementation back and reworks it with the policy feedback, and verification runs again.
+id: brownfield
+title: Brownfield - add click analytics to the existing shortener
+kind: BROWNFIELD
+requirement: |
+  Add click analytics to the existing URL shortener: record every redirect and expose per-link
+  statistics (total clicks, clicks per day, unique visitors per day, top referrers and device types)
+  through the API. Redirect latency and availability must not be affected by analytics, and visitor
+  privacy must be protected.
+baseline: [greenfield]
+
+injectedDefects:
+  - path: url-shortener/src/main/resources/db/migration/V2__create_click_events.sql
+    from: files/V2__create_click_events.with-raw-ip.sql
+    rule: pii-raw-ip
+    label: "INJECTED DEFECT: first draft persists the raw client IP (privacy violation) to exercise the policy guardrail"
+
+features:
+  - id: click-analytics
+    title: Record redirects asynchronously and expose per-link click statistics
+    triggers: [click analytics, analytics, statistics]
+    acceptance:
+      - "Every successful redirect is recorded without blocking the redirect response"
+      - "GET /api/v1/links/{code}/stats returns totalClicks, daily clicks/unique visitors, top referrers and device families"
+      - "No raw IP address is stored; visitors are counted via a salted, day-scoped hash"
+      - "When the click buffer is full or the database fails, clicks are dropped and counted, redirects still succeed"
+      - "Stats date range is validated (from <= to, at most 366 days)"
+    main:
+      - url-shortener/src/main/java/com/salian/shortener/link/LinkResolvedEvent.java
+      - url-shortener/src/main/java/com/salian/shortener/web/RedirectController.java
+      - url-shortener/src/main/java/com/salian/shortener/analytics/AnalyticsProperties.java
+      - url-shortener/src/main/java/com/salian/shortener/analytics/ClickEvent.java
+      - url-shortener/src/main/java/com/salian/shortener/analytics/ClickEventRepository.java
+      - url-shortener/src/main/java/com/salian/shortener/analytics/VisitorHasher.java
+      - url-shortener/src/main/java/com/salian/shortener/analytics/UserAgentClassifier.java
+      - url-shortener/src/main/java/com/salian/shortener/analytics/ClickRecorder.java
+      - url-shortener/src/main/java/com/salian/shortener/analytics/LinkStats.java
+      - url-shortener/src/main/java/com/salian/shortener/analytics/LinkStatsService.java
+      - url-shortener/src/main/java/com/salian/shortener/web/StatsController.java
+      - url-shortener/src/main/resources/db/migration/V2__create_click_events.sql
+    tests:
+      - url-shortener/src/test/java/com/salian/shortener/analytics/VisitorHasherTest.java
+      - url-shortener/src/test/java/com/salian/shortener/analytics/UserAgentClassifierTest.java
+      - url-shortener/src/test/java/com/salian/shortener/analytics/ClickRecorderTest.java
+      - url-shortener/src/test/java/com/salian/shortener/analytics/AnalyticsIntegrationTest.java
